@@ -102,7 +102,7 @@ func (m *Model) cycleEnv() {
 	m.envHeaders = m.envs.Headers()
 	if !m.envs.serverForced {
 		if b := m.envs.BaseURL(); b != "" {
-			if expanded, missing := config.Interpolate(b, m.vars); len(missing) == 0 {
+			if expanded, missing := config.Interpolate(b, m.effectiveVars()); len(missing) == 0 {
 				m.baseURL = expanded
 			}
 		}
@@ -123,20 +123,21 @@ func (m Model) buildRequest() (httpx.Request, []string) {
 	path, query, headers := m.form.values()
 	merged := mergeHeaders(mergeHeaders(m.envHeaders, m.baseHeaders), headers)
 
+	vars := m.effectiveVars()
 	var unresolved []string
 	add := func(names []string) {
 		unresolved = append(unresolved, names...)
 	}
 
-	base, miss := config.Interpolate(m.baseURL, m.vars)
+	base, miss := config.Interpolate(m.baseURL, vars)
 	add(miss)
-	pathParams, miss := config.InterpolateMap(path, m.vars)
+	pathParams, miss := config.InterpolateMap(path, vars)
 	add(miss)
-	q, miss := config.InterpolateMap(query, m.vars)
+	q, miss := config.InterpolateMap(query, vars)
 	add(miss)
-	h, miss := config.InterpolateMap(merged, m.vars)
+	h, miss := config.InterpolateMap(merged, vars)
 	add(miss)
-	body, miss := config.Interpolate(m.form.bodyValue(), m.vars)
+	body, miss := config.Interpolate(m.form.bodyValue(), vars)
 	add(miss)
 
 	req := httpx.Request{

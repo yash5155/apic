@@ -94,6 +94,9 @@ func (m Model) detailView() string {
 	if m.queryActive {
 		right.WriteString(m.filterInput.View() + "\n\n")
 	}
+	if m.captureActive {
+		right.WriteString(m.captureInput.View() + "\n\n")
+	}
 	right.WriteString(m.response.View())
 
 	// Both panes get the same explicit height, otherwise the shorter one's
@@ -110,7 +113,7 @@ func (m Model) detailView() string {
 	if m.envs.HasMultiple() {
 		line2 = "ctrl+r headers · ctrl+d/u scroll · ctrl+e server · ctrl+n env · ctrl+p reload · esc back"
 	}
-	hints := "tab field · ‹›enum · ctrl+s send · ctrl+b validate · ctrl+y curl · ctrl+f filter · ctrl+o save\n" + line2
+	hints := "tab field · ‹›enum · ctrl+s send · ctrl+b validate · ctrl+y curl · ctrl+f filter · ctrl+k capture · ctrl+o save\n" + line2
 	footer := helpStyle.Render(hints)
 	if m.errMsg != "" {
 		footer = errStyle.Render(m.errMsg) + "\n" + footer
@@ -134,6 +137,9 @@ func (m Model) header() string {
 	h := titleStyle.Render(title) + dimStyle.Render("  "+m.baseURL)
 	if name := m.envs.ActiveName(); name != "" {
 		h += "  " + selStyle.Render("["+name+"]")
+	}
+	if n := len(m.captured); n > 0 {
+		h += "  " + dimStyle.Render(fmt.Sprintf("{%d captured}", n))
 	}
 	return h
 }

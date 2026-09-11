@@ -1,6 +1,84 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While filtering, most keys belong to the text input.
+	if m.filtering {
+		switch msg.String() {
+		case "esc":
+			m.filtering = false
+			m.filter.Blur()
+			m.filter.SetValue("")
+			m.applyFilter()
+			return m, nil
+		case "enter":
+			m.filtering = false
+			m.filter.Blur()
+			return m, nil
+		}
+
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.applyFilter()
+		return m, cmd
+	}
+
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "ctrl+e":
+		if len(m.servers) > 1 {
+			m.serverIdx = (m.serverIdx + 1) % len(m.servers)
+			m.baseURL = m.servers[m.serverIdx]
+		}
+		return m, nil
+	case "ctrl+n":
+		if m.envs.HasMultiple() {
+			m.cycleEnv()
+		}
+		return m, nil
+	case "/":
+		m.filtering = true
+		return m, m.filter.Focus()
+	case "esc":
+		if m.filter.Value() != "" {
+			m.filter.SetValue("")
+			m.applyFilter()
+		}
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+			m.clampScroll()
+		}
+	case "down", "j":
+		if m.cursor < len(m.visible)-1 {
+			m.cursor++
+			m.clampScroll()
+		}
+	case "enter":
+		if len(m.visible) == 0 {
+			return m, nil
+		}
+		ep := m.api.Endpoints[m.visible[m.cursor]]
+		m.form = newForm(ep, m.api.Security, m.baseHeaders)
+		m.result = nil
+		m.errMsg = ""
+		m.filterPath = ""
+		m.queryActive = false
+		_, m.historyAvailable = m.store.Get(historyKey(ep))
+		m.response.SetContent(dimStyle.Render("Press ctrl+s to send the request."))
+		m.screen = screenDetail
+		return m, textinput.Blink
+	}
+
+	return m, nil
+}
 
 // buildServerList puts the active base URL first, then any other servers the
 // spec declares, de-duplicated — the order the ctrl+e switcher cycles through.

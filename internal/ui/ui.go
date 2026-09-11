@@ -78,6 +78,11 @@ type Model struct {
 	vars       map[string]string
 	envHeaders map[string]string
 
+	// request chaining: values captured from responses into {{vars}}
+	captured      map[string]string
+	captureInput  textinput.Model
+	captureActive bool
+
 	// request history
 	store            *history.Store
 	historyAvailable bool
@@ -103,21 +108,27 @@ func New(api *spec.API, baseURL string, baseHeaders map[string]string, envs *Env
 	query.Prompt = "filter "
 	query.Width = 40
 
+	capture := textinput.New()
+	capture.Placeholder = "name = .data.token"
+	capture.Prompt = "capture "
+	capture.Width = 40
+
 	store, _ := history.Load() // missing/unreadable history is non-fatal
 
 	m := Model{
-		api:         api,
-		baseURL:     baseURL,
-		baseHeaders: baseHeaders,
-		filter:      filter,
-		filterInput: query,
-		spin:        sp,
-		response:    viewport.New(40, 20),
-		servers:     buildServerList(baseURL, api.Servers),
-		store:       store,
-		envs:        envs,
-		vars:        envs.Vars(),
-		envHeaders:  envs.Headers(),
+		api:          api,
+		baseURL:      baseURL,
+		baseHeaders:  baseHeaders,
+		filter:       filter,
+		filterInput:  query,
+		captureInput: capture,
+		spin:         sp,
+		response:     viewport.New(40, 20),
+		servers:      buildServerList(baseURL, api.Servers),
+		store:        store,
+		envs:         envs,
+		vars:         envs.Vars(),
+		envHeaders:   envs.Headers(),
 	}
 	m.applyFilter()
 	return m
@@ -187,79 +198,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// While filtering, most keys belong to the text input.
-	if m.filtering {
-		switch msg.String() {
-		case "esc":
-			m.filtering = false
-			m.filter.Blur()
-			m.filter.SetValue("")
-			m.applyFilter()
-			return m, nil
-		case "enter":
-			m.filtering = false
-			m.filter.Blur()
-			return m, nil
-		}
-
-		var cmd tea.Cmd
-		m.filter, cmd = m.filter.Update(msg)
-		m.applyFilter()
-		return m, cmd
-	}
-
-	switch msg.String() {
-	case "q":
-		return m, tea.Quit
-	case "ctrl+e":
-		if len(m.servers) > 1 {
-			m.serverIdx = (m.serverIdx + 1) % len(m.servers)
-			m.baseURL = m.servers[m.serverIdx]
-		}
-		return m, nil
-	case "ctrl+n":
-		if m.envs.HasMultiple() {
-			m.cycleEnv()
-		}
-		return m, nil
-	case "/":
-		m.filtering = true
-		return m, m.filter.Focus()
-	case "esc":
-		if m.filter.Value() != "" {
-			m.filter.SetValue("")
-			m.applyFilter()
-		}
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-			m.clampScroll()
-		}
-	case "down", "j":
-		if m.cursor < len(m.visible)-1 {
-			m.cursor++
-			m.clampScroll()
-		}
-	case "enter":
-		if len(m.visible) == 0 {
-			return m, nil
-		}
-		ep := m.api.Endpoints[m.visible[m.cursor]]
-		m.form = newForm(ep, m.api.Security, m.baseHeaders)
-		m.result = nil
-		m.errMsg = ""
-		m.filterPath = ""
-		m.queryActive = false
-		_, m.historyAvailable = m.store.Get(historyKey(ep))
-		m.response.SetContent(dimStyle.Render("Press ctrl+s to send the request."))
-		m.screen = screenDetail
-		return m, textinput.Blink
-	}
-
-	return m, nil
-}
-
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// While the response filter box is open, keys belong to it.
 	if m.queryActive {
@@ -281,6 +219,26 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.filterInput, cmd = m.filterInput.Update(msg)
+		return m, cmd
+	}
+
+	// While the capture box is open, keys belong to it.
+	if m.captureActive {
+		switch msg.String() {
+		case "esc":
+			m.captureActive = false
+			m.captureInput.Blur()
+			m.captureInput.SetValue("")
+			return m, nil
+		case "enter":
+			m.captureActive = false
+			m.captureInput.Blur()
+			m.errMsg = m.doCapture(m.captureInput.Value())
+			m.captureInput.SetValue("")
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.captureInput, cmd = m.captureInput.Update(msg)
 		return m, cmd
 	}
 
@@ -380,6 +338,21 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.reloadHistory()
 		return m, nil
+
+	// Capture a value from the response into a {{variable}} for later requests.
+	case "ctrl+k":
+		if m.form.bodyFocused() {
+			break // let the textarea use ctrl+k (kill to end of line)
+		}
+		if m.result == nil || m.result.Err != nil {
+			m.errMsg = "no response to capture from"
+			return m, nil
+		}
+		m.captureActive = true
+		if m.filterPath != "" {
+			m.captureInput.SetValue("value = " + m.filterPath)
+		}
+		return m, m.captureInput.Focus()
 
 	// Scroll the response pane without stealing keys from the form.
 	// ctrl+d / ctrl+u work on every keyboard (no PgDn key needed).

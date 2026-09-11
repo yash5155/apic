@@ -74,9 +74,10 @@ and exit · `--timeout` per-request timeout · `-k/--insecure` skip TLS verify �
 **Endpoint list:** `j`/`k` move · `/` filter · `ctrl+e` switch server · `enter` open · `q` quit
 **Detail:** `tab`/`shift+tab` field · `←`/`→` cycle enum · `ctrl+s` send ·
 `ctrl+b` validate body · `ctrl+y` copy as curl · `ctrl+f` filter response ·
-`ctrl+p` reload last request · `ctrl+e` switch server · `ctrl+n` switch env ·
-`ctrl+r` headers · `ctrl+d`/`ctrl+u` (or `pgdn`/`pgup`, or mouse wheel) scroll ·
-`ctrl+g`/`ctrl+t` end/top · `ctrl+o` save full response · `esc` back
+`ctrl+k` capture a value into a variable · `ctrl+p` reload last request ·
+`ctrl+e` switch server · `ctrl+n` switch env · `ctrl+r` headers ·
+`ctrl+d`/`ctrl+u` (or `pgdn`/`pgup`, or mouse wheel) scroll · `ctrl+g`/`ctrl+t`
+end/top · `ctrl+o` save full response · `esc` back
 
 ## Features
 
@@ -87,7 +88,9 @@ with a `.data.items[0]` dot-path · **save as curl** to the clipboard · **reque
 history** per endpoint (secrets never written to disk) · **runtime server
 switching** across the spec's servers · **environments & variables** —
 `~/.config/apic/config.json` holds named environments with `{{variables}}` you
-can use anywhere, plus OpenAPI `{scheme}://{host}` server-template expansion.
+can use anywhere, plus OpenAPI `{scheme}://{host}` server-template expansion ·
+**request chaining** — capture a value from one response and reuse it in later
+requests.
 
 ### Environments & variables
 

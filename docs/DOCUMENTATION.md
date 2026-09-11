@@ -286,6 +286,7 @@ any auth the spec declares for the endpoint gets an auto-added field marked
 | `ctrl+b` | Validate the JSON body against the schema on demand |
 | `ctrl+y` | Copy the equivalent **curl** command to the clipboard |
 | `ctrl+f` | Filter the response with a dot-path (see [Filtering the response](#filtering-the-response)) |
+| `ctrl+k` | Capture a response value into a variable (see [Request chaining](#request-chaining)) |
 | `ctrl+p` | Reload the last request sent to this endpoint |
 | `ctrl+e` | Switch the active server |
 | `ctrl+r` | Toggle response **headers** view |
@@ -435,6 +436,36 @@ The config file is written owner-only (`0600`). Environment headers and
 variables are stored as-is (you authored them) — prefer `{{env.TOKEN}}` for real
 secrets. Request history stores the pre-interpolation literals you typed (e.g.
 `{{token}}`), so resolved secrets never reach `history.json`.
+
+---
+
+## 8b. Request chaining
+
+Chaining lets a multi-step workflow (log in → call → clean up) carry values
+between requests. After any response, **capture** a value from it into a variable
+and reuse it as `{{name}}` in later requests.
+
+1. Send a request (e.g. `POST /login`).
+2. Press **`ctrl+k`**. A `capture` box opens.
+3. Type `name = .dot.path`, e.g. `token = .data.token`, and press `enter`. The
+   value at that path is stored as the variable `token`.
+4. In any later request, use `{{token}}` in a field, header, path param, URL, or
+   body — it resolves to the captured value.
+
+Tips and rules:
+
+- The path uses the same dot-syntax as the response filter, so you can explore
+  with `ctrl+f` first, then `ctrl+k` (the capture box is pre-filled with your
+  current filter path).
+- With only a name (`token`), the whole response is captured; add `= .path` to
+  pick a field.
+- Values are captured **raw**: a JSON string `"abc"` becomes `abc` (no quotes),
+  a number `7` becomes `7`, and an object/array is captured as compact JSON.
+- Captured variables are **session-only and in-memory** — never written to disk
+  (they're often tokens) — and they **survive endpoint navigation and `ctrl+n`
+  environment switches**. The header shows `{N captured}` while any exist.
+- Precedence: captured variables override environment/`--var` values, so the most
+  recent capture wins.
 
 ---
 

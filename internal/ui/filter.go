@@ -19,14 +19,29 @@ import (
 // It intentionally avoids a full jq dependency; it covers navigation, which is
 // what the response pane needs. Errors are returned as readable messages.
 func applyDotPath(body, path string) (string, error) {
+	cur, err := resolvePath(body, path)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(cur, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// resolvePath parses body as JSON and walks it to the node named by a dot-path,
+// returning the decoded value. Shared by applyDotPath (which pretty-prints it)
+// and extractValue (which formats it as a raw scalar for chaining).
+func resolvePath(body, path string) (any, error) {
 	var root any
 	if err := json.Unmarshal([]byte(body), &root); err != nil {
-		return "", fmt.Errorf("response is not JSON")
+		return nil, fmt.Errorf("response is not JSON")
 	}
 
 	segs, err := parsePath(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	cur := root
@@ -35,30 +50,54 @@ func applyDotPath(body, path string) (string, error) {
 		case segKey:
 			obj, ok := cur.(map[string]any)
 			if !ok {
-				return "", fmt.Errorf("cannot read .%s: not an object", s.key)
+				return nil, fmt.Errorf("cannot read .%s: not an object", s.key)
 			}
 			v, ok := obj[s.key]
 			if !ok {
-				return "", fmt.Errorf("no such key %q", s.key)
+				return nil, fmt.Errorf("no such key %q", s.key)
 			}
 			cur = v
 		case segIndex:
 			arr, ok := cur.([]any)
 			if !ok {
-				return "", fmt.Errorf("cannot index [%d]: not an array", s.idx)
+				return nil, fmt.Errorf("cannot index [%d]: not an array", s.idx)
 			}
 			if s.idx < 0 || s.idx >= len(arr) {
-				return "", fmt.Errorf("index [%d] out of range (len %d)", s.idx, len(arr))
+				return nil, fmt.Errorf("index [%d] out of range (len %d)", s.idx, len(arr))
 			}
 			cur = arr[s.idx]
 		}
 	}
+	return cur, nil
+}
 
-	out, err := json.MarshalIndent(cur, "", "  ")
+// extractValue resolves a dot-path and formats the leaf as a plain string
+// suitable for reuse in a URL, header or body (request chaining). Scalars come
+// back without JSON quoting; objects/arrays fall back to compact JSON.
+func extractValue(body, path string) (string, error) {
+	v, err := resolvePath(body, path)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	switch t := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return t, nil
+	case bool:
+		return strconv.FormatBool(t), nil
+	case float64:
+		// Trim the trailing ".0" JSON gives every integral number.
+		return strconv.FormatFloat(t, 'f', -1, 64), nil
+	case json.Number:
+		return t.String(), nil
+	default:
+		out, err := json.Marshal(t)
+		if err != nil {
+			return "", err
+		}
+		return string(out), nil
+	}
 }
 
 type segKind int
