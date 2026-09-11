@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"github.com/yash5155/apic/internal/config"
 	"github.com/yash5155/apic/internal/httpx"
 	"github.com/yash5155/apic/internal/spec"
 	"github.com/yash5155/apic/internal/ui"
@@ -24,6 +25,8 @@ var (
 	timeout     time.Duration
 	insecure    bool
 	maxBodyMB   int
+	envName     string
+	varFlags    []string
 )
 
 var rootCmd = &cobra.Command{
@@ -37,7 +40,11 @@ Examples:
   apic openapi.json
   apic https://api.example.com/openapi.json --server https://api.example.com
   apic swagger2.yaml -H "Authorization: Bearer $TOKEN"
-  apic openapi.json --list`,
+  apic openapi.json --env staging --var token=abc
+  apic openapi.json --list
+
+Environments and variables live in ~/.config/apic/config.json. Use {{name}} in
+any field, URL, header or body; --var key=value overrides for one session.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	Version:      version,
@@ -64,6 +71,10 @@ func init() {
 		"skip TLS certificate verification (use only for trusted self-signed hosts)")
 	f.IntVar(&maxBodyMB, "max-body", 2,
 		"maximum response body to read, in megabytes")
+	f.StringVar(&envName, "env", "",
+		"environment to activate from ~/.config/apic/config.json")
+	f.StringArrayVar(&varFlags, "var", nil,
+		"override a variable for this session, key=value (repeatable)")
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -85,6 +96,26 @@ func run(cmd *cobra.Command, args []string) error {
 		InsecureTLS:  insecure,
 	})
 
+	// Resolve the active environment and its variables.
+	cliVars, err := parseVars(varFlags)
+	if err != nil {
+		return err
+	}
+	cfg, _ := config.Load() // missing/corrupt config is non-fatal
+	active := envName
+	if active == "" {
+		active = cfg.Active
+	}
+	if envName != "" {
+		if _, ok := cfg.Env(envName); !ok {
+			return fmt.Errorf("unknown --env %q; available: %s", envName, strings.Join(cfg.Names(), ", "))
+		}
+	}
+	envs := ui.NewEnvSet(cfg, active, cliVars, serverURL != "")
+	if active != "" && envs.ActiveName() == "" {
+		fmt.Fprintf(os.Stderr, "warning: active env %q not found in config; continuing without it\n", active)
+	}
+
 	api, err := spec.Load(args[0])
 	if err != nil {
 		return err
@@ -93,12 +124,21 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no endpoints found in %s (if this is a Swagger UI page, point at the raw spec URL instead)", args[0])
 	}
 
+	// Base-URL precedence: --server > active env base > first spec server.
 	base := serverURL
+	if base == "" {
+		base = envs.BaseURL()
+	}
 	if base == "" && len(api.Servers) > 0 {
 		base = api.Servers[0]
 	}
 	if base == "" {
 		return fmt.Errorf("spec declares no server; pass --server https://api.example.com")
+	}
+	// Expand any {{var}} in the base URL up front; a bad base URL is fatal.
+	base, missing := config.Interpolate(base, envs.Vars())
+	if len(missing) > 0 {
+		return fmt.Errorf("base URL has unresolved variables: %s", strings.Join(missing, ", "))
 	}
 
 	// --list is handy for scripting and for checking the parser without
@@ -112,11 +152,28 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	_, err = tea.NewProgram(
-		ui.New(api, base, baseHeaders),
+		ui.New(api, base, baseHeaders, envs),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	).Run()
 	return err
+}
+
+// parseVars turns repeated "key=value" flags into a map.
+func parseVars(raw []string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(raw))
+	for _, kv := range raw {
+		k, v, ok := strings.Cut(kv, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid --var %q (want key=value)", kv)
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 // parseHeaders turns repeated "Name: value" flags into a map. It is strict

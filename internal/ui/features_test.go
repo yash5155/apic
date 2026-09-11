@@ -28,7 +28,7 @@ func TestServerSwitch(t *testing.T) {
 		Servers:   []string{"https://a.test", "https://b.test"},
 		Endpoints: []spec.Endpoint{{Method: "GET", Path: "/x"}},
 	}
-	m := New(api, "https://a.test", nil)
+	m := New(api, "https://a.test", nil, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	if len(m.servers) != 2 {
@@ -46,7 +46,7 @@ func TestServerSwitch(t *testing.T) {
 
 func TestSecurityAutoFill(t *testing.T) {
 	api := loadAPIFrom(t, "../../testdata/secured.yaml")
-	m := New(api, "https://secure.example.test", map[string]string{"Authorization": "Bearer T"})
+	m := New(api, "https://secure.example.test", map[string]string{"Authorization": "Bearer T"}, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// GET /widgets (first, ApiKeyAuth) should synthesize the X-API-Key header.
@@ -66,7 +66,7 @@ func TestSecurityAutoFill(t *testing.T) {
 
 func TestBodyValidationBlocksSend(t *testing.T) {
 	api := loadAPIFrom(t, "../../testdata/secured.yaml")
-	m := New(api, "https://secure.example.test", map[string]string{"Authorization": "Bearer T"})
+	m := New(api, "https://secure.example.test", map[string]string{"Authorization": "Bearer T"}, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	m = send(m, ctrl(tea.KeyDown), ctrl(tea.KeyEnter)) // POST /widgets
@@ -91,7 +91,7 @@ func TestHistorySavesAndRedacts(t *testing.T) {
 	defer srv.Close()
 
 	api := loadAPIFrom(t, "../../testdata/secured.yaml")
-	m := New(api, srv.URL, nil)
+	m := New(api, srv.URL, nil, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// GET /widgets has a synthesized X-API-Key (sensitive) field.

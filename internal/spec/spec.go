@@ -91,7 +91,7 @@ func flatten(doc *openapi3.T) *API {
 	}
 	for _, s := range doc.Servers {
 		if s != nil && s.URL != "" {
-			api.Servers = append(api.Servers, s.URL)
+			api.Servers = append(api.Servers, expandServer(s))
 		}
 	}
 
@@ -139,6 +139,30 @@ func flatten(doc *openapi3.T) *API {
 	})
 
 	return api
+}
+
+// expandServer turns a templated server URL such as
+// "{scheme}://{host}:{port}/{basePath}" into a concrete URL using each
+// variable's declared Default (falling back to its first Enum value). Any
+// variable with no usable value is left as {name} so the user can see it needs
+// filling. These are OpenAPI's own single-brace tokens, resolved here in the
+// spec layer — distinct from apic's {{var}} interpolation done later in the UI.
+func expandServer(s *openapi3.Server) string {
+	url := s.URL
+	for name, v := range s.Variables {
+		if v == nil {
+			continue
+		}
+		val := v.Default
+		if val == "" && len(v.Enum) > 0 {
+			val = v.Enum[0]
+		}
+		if val == "" {
+			continue // leave {name} so the user can see it needs filling
+		}
+		url = strings.ReplaceAll(url, "{"+name+"}", val)
+	}
+	return url
 }
 
 // convertSecuritySchemes flattens the document's declared auth schemes.

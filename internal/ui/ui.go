@@ -73,6 +73,11 @@ type Model struct {
 	servers   []string
 	serverIdx int
 
+	// environments & variable interpolation
+	envs       *EnvSet
+	vars       map[string]string
+	envHeaders map[string]string
+
 	// request history
 	store            *history.Store
 	historyAvailable bool
@@ -82,8 +87,9 @@ type Model struct {
 }
 
 // New builds the initial model. baseHeaders are merged into every request the
-// user sends (form values win on conflict); pass nil for none.
-func New(api *spec.API, baseURL string, baseHeaders map[string]string) Model {
+// user sends (form values win on conflict); pass nil for none. envs carries the
+// active environment and its variables; pass nil when no config is in play.
+func New(api *spec.API, baseURL string, baseHeaders map[string]string, envs *EnvSet) Model {
 	filter := textinput.New()
 	filter.Placeholder = "filter endpoints"
 	filter.Prompt = "/ "
@@ -109,69 +115,15 @@ func New(api *spec.API, baseURL string, baseHeaders map[string]string) Model {
 		response:    viewport.New(40, 20),
 		servers:     buildServerList(baseURL, api.Servers),
 		store:       store,
+		envs:        envs,
+		vars:        envs.Vars(),
+		envHeaders:  envs.Headers(),
 	}
 	m.applyFilter()
 	return m
 }
 
-// buildServerList puts the active base URL first, then any other servers the
-// spec declares, de-duplicated — the order the ctrl+e switcher cycles through.
-func buildServerList(baseURL string, servers []string) []string {
-	out := []string{baseURL}
-	seen := map[string]bool{baseURL: true}
-	for _, s := range servers {
-		if s != "" && !seen[s] {
-			out = append(out, s)
-			seen[s] = true
-		}
-	}
-	return out
-}
-
 func (m Model) Init() tea.Cmd { return textinput.Blink }
-
-// applyFilter recomputes which endpoints are shown. Matching is a simple
-// case-insensitive substring test against "METHOD /path summary".
-func (m *Model) applyFilter() {
-	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
-	m.visible = m.visible[:0]
-
-	for i, ep := range m.api.Endpoints {
-		if q == "" {
-			m.visible = append(m.visible, i)
-			continue
-		}
-		hay := strings.ToLower(ep.Method + " " + ep.Path + " " + ep.Summary)
-		if strings.Contains(hay, q) {
-			m.visible = append(m.visible, i)
-		}
-	}
-
-	if m.cursor >= len(m.visible) {
-		m.cursor = max(0, len(m.visible)-1)
-	}
-	m.offset = 0
-}
-
-// listHeight is how many endpoint rows fit on screen.
-func (m Model) listHeight() int {
-	h := m.height - 8
-	if h < 3 {
-		return 3
-	}
-	return h
-}
-
-// clampScroll keeps the cursor inside the visible window.
-func (m *Model) clampScroll() {
-	h := m.listHeight()
-	if m.cursor < m.offset {
-		m.offset = m.cursor
-	}
-	if m.cursor >= m.offset+h {
-		m.offset = m.cursor - h + 1
-	}
-}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -266,6 +218,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.baseURL = m.servers[m.serverIdx]
 		}
 		return m, nil
+	case "ctrl+n":
+		if m.envs.HasMultiple() {
+			m.cycleEnv()
+		}
+		return m, nil
 	case "/":
 		m.filtering = true
 		return m, m.filter.Focus()
@@ -352,6 +309,16 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// Cycle the active environment.
+	case "ctrl+n":
+		if m.form.bodyFocused() {
+			break
+		}
+		if m.envs.HasMultiple() {
+			m.cycleEnv()
+		}
+		return m, nil
+
 	// Filter the response body with a dot-path query.
 	case "ctrl+f":
 		if m.form.bodyFocused() {
@@ -383,7 +350,12 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Copy the equivalent curl command to the clipboard.
 	case "ctrl+y":
-		cmd, err := buildCurl(m.buildRequest())
+		req, missing := m.buildRequest()
+		if len(missing) > 0 {
+			m.errMsg = "unresolved variables: " + strings.Join(missing, ", ")
+			return m, nil
+		}
+		cmd, err := buildCurl(req)
 		if err != nil {
 			m.errMsg = "curl failed: " + err.Error()
 			return m, nil
@@ -467,27 +439,20 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sending = true
 		m.result = nil
 
+		// Build + interpolate; refuse to send if any {{var}} is unresolved.
+		req, missing := m.buildRequest()
+		if len(missing) > 0 {
+			m.errMsg = "unresolved variables: " + strings.Join(missing, ", ")
+			m.sending = false
+			return m, nil
+		}
+
 		// Two commands at once: start the spinner ticking AND fire the
 		// request. tea.Batch runs them concurrently.
-		return m, tea.Batch(m.spin.Tick, sendRequest(m.buildRequest()))
+		return m, tea.Batch(m.spin.Tick, sendRequest(req))
 	}
 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.update(msg)
 	return m, cmd
-}
-
-// buildRequest assembles the httpx.Request from the current form. Shared by the
-// send (ctrl+s) and save-as-curl (ctrl+y) paths.
-func (m Model) buildRequest() httpx.Request {
-	path, query, headers := m.form.values()
-	return httpx.Request{
-		Method:     m.form.endpoint.Method,
-		BaseURL:    m.baseURL,
-		Path:       m.form.endpoint.Path,
-		PathParams: path,
-		Query:      query,
-		Headers:    mergeHeaders(m.baseHeaders, headers),
-		Body:       m.form.bodyValue(),
-	}
 }

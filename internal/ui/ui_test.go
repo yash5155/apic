@@ -40,7 +40,7 @@ func typeText(m Model, s string) Model {
 }
 
 func sized(t *testing.T, base string) Model {
-	m := New(loadAPI(t), base, nil)
+	m := New(loadAPI(t), base, nil, nil)
 	return send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 }
 

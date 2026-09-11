@@ -64,7 +64,8 @@ Against a real API you'll usually want to override the base URL and pass auth:
 
 ## Flags
 
-`--server` base URL · `-H/--header` global header (repeatable) · `--list` print
+`--server` base URL · `-H/--header` global header (repeatable) · `--env`
+environment · `--var key=value` set a variable (repeatable) · `--list` print
 and exit · `--timeout` per-request timeout · `-k/--insecure` skip TLS verify ·
 `--max-body` response cap (MB) · `-v/--version`. Run `apic --help` for details.
 
@@ -73,9 +74,9 @@ and exit · `--timeout` per-request timeout · `-k/--insecure` skip TLS verify �
 **Endpoint list:** `j`/`k` move · `/` filter · `ctrl+e` switch server · `enter` open · `q` quit
 **Detail:** `tab`/`shift+tab` field · `←`/`→` cycle enum · `ctrl+s` send ·
 `ctrl+b` validate body · `ctrl+y` copy as curl · `ctrl+f` filter response ·
-`ctrl+p` reload last request · `ctrl+e` switch server · `ctrl+r` headers ·
-`ctrl+d`/`ctrl+u` (or `pgdn`/`pgup`, or mouse wheel) scroll · `ctrl+g`/`ctrl+t`
-end/top · `ctrl+o` save full response · `esc` back
+`ctrl+p` reload last request · `ctrl+e` switch server · `ctrl+n` switch env ·
+`ctrl+r` headers · `ctrl+d`/`ctrl+u` (or `pgdn`/`pgup`, or mouse wheel) scroll ·
+`ctrl+g`/`ctrl+t` end/top · `ctrl+o` save full response · `esc` back
 
 ## Features
 
@@ -84,7 +85,28 @@ validation** against the request schema before sending · **security-scheme
 auto-fill** (api-key / bearer fields from the spec) · **response filtering**
 with a `.data.items[0]` dot-path · **save as curl** to the clipboard · **request
 history** per endpoint (secrets never written to disk) · **runtime server
-switching** across the spec's servers.
+switching** across the spec's servers · **environments & variables** —
+`~/.config/apic/config.json` holds named environments with `{{variables}}` you
+can use anywhere, plus OpenAPI `{scheme}://{host}` server-template expansion.
+
+### Environments & variables
+
+Create `~/.config/apic/config.json`:
+
+```json
+{
+  "active": "staging",
+  "environments": {
+    "prod":    { "base_url": "https://api.example.com", "vars": { "token": "{{env.PROD_TOKEN}}" } },
+    "staging": { "base_url": "https://staging.example.com", "headers": { "X-Env": "staging" }, "vars": { "token": "abc" } }
+  }
+}
+```
+
+Then use `{{token}}` in any field, URL, header, or body. Switch environments at
+runtime with `ctrl+n`, or per-run with `--env prod --var token=xyz`. Unresolved
+`{{…}}` blocks the send with a clear message. Prefer `{{env.NAME}}` to keep real
+secrets out of the file (which is written `0600`).
 
 ## How it's put together
 

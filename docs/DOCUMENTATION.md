@@ -121,6 +121,8 @@ apic <spec-file-or-url> [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `--server <url>` | first server in spec | Base URL requests are sent to. |
+| `--env <name>` | config's `active` | Environment to activate from the config file (see [§8a](#8a-environments-and-variables)). |
+| `--var key=value` | none | Set/override a variable for this session. Repeatable. |
 | `--list` | off | Print endpoints and exit; no TUI. |
 | `-H, --header "Name: value"` | none | Header added to **every** request. Repeatable. |
 | `--timeout <duration>` | `30s` | Per-request timeout, and the timeout for fetching a remote spec. Accepts Go durations: `500ms`, `10s`, `2m`. |
@@ -141,13 +143,17 @@ apic <spec-file-or-url> [flags]
 The base URL is resolved in this order:
 
 1. `--server` if you pass it.
-2. Otherwise, the **first** `servers` entry in the spec.
-3. If neither exists, `apic` exits and asks you to pass `--server`.
+2. Otherwise, the active environment's `base_url` (see [§8a](#8a-environments-and-variables)).
+3. Otherwise, the **first** `servers` entry in the spec (with any
+   `{scheme}://{host}` server variables expanded from their defaults).
+4. If none exists, `apic` exits and asks you to pass `--server`.
 
-**Why you often need `--server`.** Specs frequently declare a placeholder or
-templated server such as `{scheme}://{host}/{basePath}`, or a server for a
+The chosen base URL is itself run through `{{variable}}` interpolation, so
+`--server '{{host}}'` or an env `base_url` of `https://{{host}}/content` works.
+
+**Why you often need `--server`.** Specs frequently declare a server for a
 different environment than the one you want. In those cases pass the real base
-URL yourself.
+URL yourself, or set it per environment in the config file.
 
 **The double-prefix trap.** The server URL and the spec's paths are
 concatenated. If the spec's paths already start with a prefix (e.g.
@@ -367,6 +373,68 @@ The current base URL is shown in the header.
 The UI draws two panes side by side. Give it **~100 columns or more**; a
 narrower window compresses the panes and can look cramped. Responses are wrapped
 to the pane width, so long lines (like image URLs) stay inside the border.
+
+---
+
+## 8a. Environments and variables
+
+apic can act as a reusable workspace via `~/.config/apic/config.json`. It holds
+named **environments** (prod/staging/local), each with an optional base URL,
+default headers, and **variables**:
+
+```json
+{
+  "active": "staging",
+  "environments": {
+    "prod": {
+      "base_url": "https://api.example.com",
+      "vars": { "token": "{{env.PROD_TOKEN}}" }
+    },
+    "staging": {
+      "base_url": "https://staging.example.com",
+      "headers": { "X-Env": "staging" },
+      "vars": { "token": "abc" }
+    }
+  }
+}
+```
+
+### Using variables
+
+Write `{{name}}` anywhere — a form field value, a header, the request body, or a
+base URL — and it's replaced from the active environment's variables when you
+send. Two special forms:
+
+- `{{env.NAME}}` reads an OS environment variable (keep real secrets out of the
+  file).
+- `{{timestamp}}` is a built-in (current UTC RFC3339 time).
+
+If a `{{name}}` has no value, the send is **blocked** with
+`unresolved variables: name` — nothing half-filled goes out. (Single-brace
+`{pathParam}` is OpenAPI's own syntax and is never touched by this.)
+
+### Selecting and switching
+
+- `--env <name>` activates an environment for the run; a typo lists the valid
+  names. Without it, the file's `"active"` is used.
+- `--var key=value` (repeatable) sets or overrides a variable just for this
+  session — it wins over the file.
+- In the TUI, **`ctrl+n`** cycles the active environment; the header shows the
+  current one as `[staging]`, and the base URL/headers/variables update live.
+
+### Precedence
+
+- **Base URL**: `--server` > active env `base_url` > first spec server. `--server`
+  also pins the base so switching environments won't change it.
+- **Variables**: built-ins < config-file `vars` < `--var`.
+- **Headers**: env `headers` < global `-H` < what you type on the form.
+
+### Security
+
+The config file is written owner-only (`0600`). Environment headers and
+variables are stored as-is (you authored them) — prefer `{{env.TOKEN}}` for real
+secrets. Request history stores the pre-interpolation literals you typed (e.g.
+`{{token}}`), so resolved secrets never reach `history.json`.
 
 ---
 

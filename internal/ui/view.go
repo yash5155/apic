@@ -56,7 +56,11 @@ func (m Model) listView() string {
 	}
 
 	b.WriteString("\n" + dimStyle.Render(fmt.Sprintf("%d/%d endpoints", len(m.visible), len(m.api.Endpoints))))
-	b.WriteString("\n" + helpStyle.Render("j/k move · / filter · ctrl+e server · enter open · q quit"))
+	hints := "j/k move · / filter · ctrl+e server · enter open · q quit"
+	if m.envs.HasMultiple() {
+		hints = "j/k move · / filter · ctrl+e server · ctrl+n env · enter open · q quit"
+	}
+	b.WriteString("\n" + helpStyle.Render(hints))
 	return b.String()
 }
 
@@ -102,8 +106,11 @@ func (m Model) detailView() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
-	hints := "tab field · ‹›enum · ctrl+s send · ctrl+b validate · ctrl+y curl · ctrl+f filter · ctrl+o save\n" +
-		"ctrl+r headers · ctrl+d/u scroll · ctrl+e server · ctrl+p reload · esc back"
+	line2 := "ctrl+r headers · ctrl+d/u scroll · ctrl+e server · ctrl+p reload · esc back"
+	if m.envs.HasMultiple() {
+		line2 = "ctrl+r headers · ctrl+d/u scroll · ctrl+e server · ctrl+n env · ctrl+p reload · esc back"
+	}
+	hints := "tab field · ‹›enum · ctrl+s send · ctrl+b validate · ctrl+y curl · ctrl+f filter · ctrl+o save\n" + line2
 	footer := helpStyle.Render(hints)
 	if m.errMsg != "" {
 		footer = errStyle.Render(m.errMsg) + "\n" + footer
@@ -124,7 +131,11 @@ func (m Model) header() string {
 	if title == "" {
 		title = "API"
 	}
-	return titleStyle.Render(title) + dimStyle.Render("  "+m.baseURL)
+	h := titleStyle.Render(title) + dimStyle.Render("  "+m.baseURL)
+	if name := m.envs.ActiveName(); name != "" {
+		h += "  " + selStyle.Render("["+name+"]")
+	}
+	return h
 }
 
 func truncate(s string, n int) string {

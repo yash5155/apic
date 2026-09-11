@@ -34,7 +34,7 @@ func TestGlobalHeaderIsSent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := New(loadAPI(t), srv.URL, map[string]string{"Authorization": "Bearer global"})
+	m := New(loadAPI(t), srv.URL, map[string]string{"Authorization": "Bearer global"}, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = send(m, tea.KeyMsg{Type: tea.KeyEnter}) // GET /pets
 
