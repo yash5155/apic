@@ -16,10 +16,12 @@ info() { printf '%s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 # --- detect OS ---------------------------------------------------------------
+ext=""      # asset/binary suffix (.exe on Windows)
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$os" in
   linux) os="linux" ;;
   darwin) os="darwin" ;;
+  mingw* | msys* | cygwin* | windows*) os="windows"; ext=".exe" ;;
   *) err "unsupported OS '$os'. Download manually: https://github.com/$REPO/releases" ;;
 esac
 
@@ -31,7 +33,8 @@ case "$arch" in
   *) err "unsupported architecture '$arch'. Download manually: https://github.com/$REPO/releases" ;;
 esac
 
-asset="apic_${os}_${arch}"
+asset="apic_${os}_${arch}${ext}"
+binfile="${BIN}${ext}"
 
 # --- resolve download URL (latest or a pinned version) -----------------------
 version="${APIC_VERSION:-latest}"
@@ -42,7 +45,10 @@ else
 fi
 
 # --- choose an install directory (no sudo needed by default) ------------------
-dir="${APIC_INSTALL_DIR:-$HOME/.local/bin}"
+# Git Bash already has $HOME/bin on PATH, so prefer it on Windows.
+default_dir="$HOME/.local/bin"
+[ "$os" = "windows" ] && default_dir="$HOME/bin"
+dir="${APIC_INSTALL_DIR:-$default_dir}"
 mkdir -p "$dir" || err "could not create install dir: $dir"
 
 # --- download ----------------------------------------------------------------
@@ -61,10 +67,10 @@ fi
 [ -s "$tmp" ] || err "downloaded file is empty; no release asset for ${os}/${arch} yet?"
 
 chmod +x "$tmp"
-mv "$tmp" "$dir/$BIN"
+mv "$tmp" "$dir/$binfile"
 trap - EXIT INT TERM
 
-info "Installed ${BIN} -> ${dir}/${BIN}"
+info "Installed ${binfile} -> ${dir}/${binfile}"
 
 # --- PATH hint ---------------------------------------------------------------
 case ":$PATH:" in
@@ -76,6 +82,6 @@ case ":$PATH:" in
     info "${dir} is not on your PATH. Add it, then reopen your shell:"
     info "  echo 'export PATH=\"${dir}:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
     info ""
-    info "Or run it directly: ${dir}/${BIN} --help"
+    info "Or run it directly: ${dir}/${binfile} --help"
     ;;
 esac
