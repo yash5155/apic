@@ -1,0 +1,64 @@
+name: Bug report
+description: Something isn't working as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill in the details
+        below so we can reproduce and fix it quickly.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I run apic against ... I expected ... but got ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact command(s) you ran. Include a minimal spec if you can.
+      placeholder: |
+        1. apic https://... --server https://...
+        2. open GET /...
+        3. press ctrl+s
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: apic version
+      description: Output of `apic --version`
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows (Git Bash / WSL)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / error
+      description: Paste the terminal output or error message.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I'm on the latest release
+          required: false
+        - label: I searched existing issues and this isn't a duplicate
+          required: true

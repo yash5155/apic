@@ -1,5 +1,11 @@
 # apic
 
+[![CI](https://github.com/yash5155/apic/actions/workflows/ci.yml/badge.svg)](https://github.com/yash5155/apic/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/yash5155/apic?sort=semver)](https://github.com/yash5155/apic/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/yash5155/apic.svg)](https://pkg.go.dev/github.com/yash5155/apic)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 A terminal client for any **OpenAPI 3.x or Swagger 2.0** service, in JSON or
 YAML, local or remote. It reads the spec, lists the endpoints, and builds an
 input form from each endpoint's declared parameters — so you get correct field
@@ -134,13 +140,25 @@ arrives and you clear the flag.
 single biggest mistake in Bubble Tea apps — the whole UI locks up until it
 returns.
 
+## Contributing
+
+Contributions are welcome — bug reports, features, docs, questions.
+
+- 🐛 [Open a bug report](https://github.com/yash5155/apic/issues/new?template=bug_report.yml)
+- ✨ [Request a feature](https://github.com/yash5155/apic/issues/new?template=feature_request.yml)
+- 🔧 Send a pull request — see [CONTRIBUTING.md](CONTRIBUTING.md)
+
+Every PR is checked by CI (gofmt, vet, build, `test -race`). Please read the
+[Contributing guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md).
+Security issues? See [SECURITY.md](SECURITY.md).
+
 ## Tests
 
 ```bash
 go test ./...
 ```
 
-21 tests, no terminal needed. The model is a pure function, so the UI tests
+No terminal needed. The model is a pure function, so the UI tests
 drive it with synthetic `tea.KeyMsg` values and assert on the resulting
 state. `TestFullRequestRoundTrip` goes end to end: presses ctrl+s, runs the
 command Bubble Tea would have run, unwraps the `tea.BatchMsg`, feeds the
