@@ -37,12 +37,21 @@ terminal.
 
 ## 1. Install
 
-From the project directory:
+**One line (recommended)** — downloads the right prebuilt binary for your OS and
+architecture from the latest GitHub release. No Go toolchain required:
 
 ```bash
-go build -o apic .        # build a local ./apic binary
-# or
-go install .              # install to ~/go/bin/apic
+curl -fsSL https://raw.githubusercontent.com/yash5155/apic/main/install.sh | bash
+```
+
+It installs to `~/.local/bin` by default. Override with `APIC_INSTALL_DIR`, or
+pin a version with `APIC_VERSION=v0.1.0`. If the install dir isn't on your PATH,
+the script prints the exact line to add it.
+
+**With Go:**
+
+```bash
+go install github.com/yash5155/apic@latest   # installs to ~/go/bin/apic
 ```
 
 If `~/go/bin` is not on your `PATH`:
@@ -51,11 +60,12 @@ If `~/go/bin` is not on your `PATH`:
 echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc && source ~/.bashrc
 ```
 
-Requires Go 1.22 or newer. While developing you can skip the rebuild step and
-run directly:
+**From source** (requires Go 1.22+):
 
 ```bash
-go run . testdata/petstore.json
+git clone https://github.com/yash5155/apic && cd apic
+go build -o apic .
+go run . testdata/petstore.json   # or run without building
 ```
 
 ---

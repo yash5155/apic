@@ -12,10 +12,34 @@ doesn't, and that's the whole point of the project.
 > **Full documentation:** see [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)
 > for every flag, every use case, the security model, and troubleshooting.
 
-## Try it
+## Install
+
+One line — downloads the right prebuilt binary for your OS/arch, no Go needed:
 
 ```bash
-go mod tidy
+curl -fsSL https://raw.githubusercontent.com/yash5155/apic/main/install.sh | bash
+```
+
+Then just run:
+
+```bash
+apic openapi.json
+```
+
+Other ways:
+
+```bash
+go install github.com/yash5155/apic@latest        # if you have Go
+# or grab a binary from https://github.com/yash5155/apic/releases
+```
+
+The installer drops `apic` in `~/.local/bin` by default (override with
+`APIC_INSTALL_DIR`). If that's not on your PATH it prints the one line to add it.
+
+## Build from source
+
+```bash
+git clone https://github.com/yash5155/apic && cd apic
 go build -o apic .
 
 ./apic --list testdata/petstore.json   # parser check, no UI
