@@ -1,0 +1,147 @@
+# apic
+
+A terminal client for any **OpenAPI 3.x or Swagger 2.0** service, in JSON or
+YAML, local or remote. It reads the spec, lists the endpoints, and builds an
+input form from each endpoint's declared parameters — so you get correct field
+names, required markers, enum hints and a prefilled JSON body without typing any
+of it yourself.
+
+Generic HTTP clients exist everywhere. A schema-driven one in the terminal
+doesn't, and that's the whole point of the project.
+
+> **Full documentation:** see [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)
+> for every flag, every use case, the security model, and troubleshooting.
+
+## Try it
+
+```bash
+go mod tidy
+go build -o apic .
+
+./apic --list testdata/petstore.json   # parser check, no UI
+./apic testdata/petstore.json          # the real thing
+./apic https://petstore3.swagger.io/api/v3/openapi.json
+./apic testdata/swagger2.json          # Swagger 2.0, auto-converted
+./apic testdata/mini.yaml              # YAML spec
+```
+
+Against a real API you'll usually want to override the base URL and pass auth:
+
+```bash
+./apic openapi.json --server http://localhost:8080
+./apic openapi.json --server https://api.example.com -H "Authorization: Bearer $TOKEN"
+```
+
+## Flags
+
+`--server` base URL · `-H/--header` global header (repeatable) · `--list` print
+and exit · `--timeout` per-request timeout · `-k/--insecure` skip TLS verify ·
+`--max-body` response cap (MB) · `-v/--version`. Run `apic --help` for details.
+
+## Keys
+
+**Endpoint list:** `j`/`k` move · `/` filter · `enter` open · `q` quit
+**Detail:** `tab`/`shift+tab` field · `ctrl+s` send · `ctrl+d`/`ctrl+u` (or
+`pgdn`/`pgup`, or mouse wheel) scroll · `ctrl+g`/`ctrl+t` end/top · `ctrl+r`
+headers · `ctrl+o` save full response · `esc` back
+
+## How it's put together
+
+```
+cmd/root.go            Cobra: flags, spec loading, base URL resolution
+internal/spec/spec.go  OpenAPI document -> our own Endpoint/Param structs
+internal/httpx/        builds and sends the request. No UI knowledge.
+internal/ui/form.go    the form generated at runtime from a schema
+internal/ui/ui.go      root model, both screens, async handling
+```
+
+### The important design decision
+
+`spec.Load` converts kin-openapi's types into plain `Endpoint` and `Param`
+structs immediately, and nothing else in the program ever imports
+kin-openapi.
+
+Those library types are deeply nested and full of `*Ref` indirection —
+`op.Parameters[0].Value.Schema.Value.Type` is a normal access path, and
+every link can be nil. If that leaks into the UI, every `View` function
+becomes six levels of nil checks. Pay the cost once at the boundary, and
+the rest of the code stays readable.
+
+Same reasoning for `httpx`: `Send` is a plain blocking function that knows
+nothing about Bubble Tea, which is exactly why it's easy to test.
+
+## The two new concepts (compared to a simple TUI)
+
+**1. Forms you don't know at compile time.** You can't declare the inputs
+as struct fields, because the number of them depends on which endpoint the
+user picked. So they live in a slice and focus is an index into it:
+
+```go
+type form struct {
+    inputs []textinput.Model
+    body   textarea.Model
+    focus  int   // 0..len(inputs)-1 = a param, len(inputs) = the body
+}
+```
+
+`focusCurrent` blurs everything and re-focuses whatever `focus` points at.
+Blurring all of them every time is slightly wasteful and much simpler than
+tracking the previous field.
+
+**2. Async without freezing.** A `tea.Cmd` is just a function returning a
+message. Bubble Tea runs it on its own goroutine and feeds the result back
+into `Update` like any other event:
+
+```go
+func sendRequest(r httpx.Request) tea.Cmd {
+    return func() tea.Msg {
+        return responseMsg(httpx.Send(r))   // blocking, off the main loop
+    }
+}
+```
+
+`Update` returns immediately with `sending = true`, so the spinner keeps
+animating while the request is in flight. When it lands, `responseMsg`
+arrives and you clear the flag.
+
+`tea.Batch(m.spin.Tick, sendRequest(req))` starts both at once.
+
+**Never call a blocking function directly inside `Update`.** That is the
+single biggest mistake in Bubble Tea apps — the whole UI locks up until it
+returns.
+
+## Tests
+
+```bash
+go test ./...
+```
+
+21 tests, no terminal needed. The model is a pure function, so the UI tests
+drive it with synthetic `tea.KeyMsg` values and assert on the resulting
+state. `TestFullRequestRoundTrip` goes end to end: presses ctrl+s, runs the
+command Bubble Tea would have run, unwraps the `tea.BatchMsg`, feeds the
+`responseMsg` back into `Update`, and checks the status line renders — all
+against a real `httptest` server.
+
+## What's missing
+
+Deliberately, so there's something to build:
+
+- **Read `securitySchemes`.** Global auth works today via `-H`; a nice next step
+  is reading the spec's declared schemes and prompting for the right one.
+- **Request history.** Save what you sent per endpoint and reload it, so
+  you're not retyping the same ids. Needs a small JSON store in `~/.config/apic/`.
+- **Enum dropdowns.** Enums are placeholder hints right now; they should be
+  a proper selector you can't type a wrong value into.
+- **Response filtering.** A jq-style query box over the response body.
+- **Multiple servers.** The spec often lists prod/staging; let the user switch.
+- **Body validation.** Check the typed JSON against the schema before
+  sending, and show which field is wrong.
+- **Save as curl.** One keypress to copy the equivalent curl command.
+
+## Notes
+
+Versions in `go.mod` are pinned to what this was verified against. Newer
+kin-openapi releases are fine, but note that `Schema.Type` changed from
+`string` to `*Types` around v0.121 — if you upgrade and see type errors,
+that's why.

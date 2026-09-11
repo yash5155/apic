@@ -1,0 +1,26 @@
+# Compiled binary (built via `go build -o apic .` or the install script)
+/apic
+/dist/
+
+# Responses saved from the UI with ctrl+o
+apic-response*.json
+
+# Private/local API specs — do not publish
+myvurt.json
+
+# Go test/build artifacts
+*.test
+*.out
+coverage.*
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local tooling state (claude-flow / ruflo)
+.claude-flow/
+.claude/
+.hive-mind/
+.swarm/
