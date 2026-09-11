@@ -5,18 +5,15 @@
 package ui
 
 import (
-	"fmt"
-	"net/http"
-	"os"
-	"sort"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
+	"github.com/yash5155/apic/internal/history"
 	"github.com/yash5155/apic/internal/httpx"
 	"github.com/yash5155/apic/internal/spec"
 )
@@ -67,6 +64,19 @@ type Model struct {
 	errMsg      string
 	showHeaders bool // toggle response headers view
 
+	// response filter (dot-path, e.g. .data.items[0].name)
+	filterInput textinput.Model
+	queryActive bool
+	filterPath  string
+
+	// runtime server switching
+	servers   []string
+	serverIdx int
+
+	// request history
+	store            *history.Store
+	historyAvailable bool
+
 	width, height int
 	ready         bool
 }
@@ -82,16 +92,40 @@ func New(api *spec.API, baseURL string, baseHeaders map[string]string) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
+	query := textinput.New()
+	query.Placeholder = ".data.items[0].name"
+	query.Prompt = "filter "
+	query.Width = 40
+
+	store, _ := history.Load() // missing/unreadable history is non-fatal
+
 	m := Model{
 		api:         api,
 		baseURL:     baseURL,
 		baseHeaders: baseHeaders,
 		filter:      filter,
+		filterInput: query,
 		spin:        sp,
 		response:    viewport.New(40, 20),
+		servers:     buildServerList(baseURL, api.Servers),
+		store:       store,
 	}
 	m.applyFilter()
 	return m
+}
+
+// buildServerList puts the active base URL first, then any other servers the
+// spec declares, de-duplicated — the order the ctrl+e switcher cycles through.
+func buildServerList(baseURL string, servers []string) []string {
+	out := []string{baseURL}
+	seen := map[string]bool{baseURL: true}
+	for _, s := range servers {
+		if s != "" && !seen[s] {
+			out = append(out, s)
+			seen[s] = true
+		}
+	}
+	return out
 }
 
 func (m Model) Init() tea.Cmd { return textinput.Blink }
@@ -167,8 +201,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sending = false
 		m.result = &res
 		m.showHeaders = false
+		m.filterPath = ""
 		m.refreshResponse()
 		m.response.GotoTop()
+		// Remember a successful request so it can be reloaded later.
+		if res.Err == nil && res.Status >= 200 && res.Status < 300 {
+			m.saveHistory()
+		}
 		return m, nil
 
 	case tea.MouseMsg:
@@ -221,6 +260,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
+	case "ctrl+e":
+		if len(m.servers) > 1 {
+			m.serverIdx = (m.serverIdx + 1) % len(m.servers)
+			m.baseURL = m.servers[m.serverIdx]
+		}
+		return m, nil
 	case "/":
 		m.filtering = true
 		return m, m.filter.Focus()
@@ -244,9 +289,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		ep := m.api.Endpoints[m.visible[m.cursor]]
-		m.form = newForm(ep)
+		m.form = newForm(ep, m.api.Security, m.baseHeaders)
 		m.result = nil
 		m.errMsg = ""
+		m.filterPath = ""
+		m.queryActive = false
+		_, m.historyAvailable = m.store.Get(historyKey(ep))
 		m.response.SetContent(dimStyle.Render("Press ctrl+s to send the request."))
 		m.screen = screenDetail
 		return m, textinput.Blink
@@ -256,6 +304,29 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While the response filter box is open, keys belong to it.
+	if m.queryActive {
+		switch msg.String() {
+		case "esc":
+			m.queryActive = false
+			m.filterInput.Blur()
+			m.filterPath = ""
+			m.filterInput.SetValue("")
+			m.refreshResponse()
+			return m, nil
+		case "enter":
+			m.queryActive = false
+			m.filterInput.Blur()
+			m.filterPath = strings.TrimSpace(m.filterInput.Value())
+			m.refreshResponse()
+			m.response.GotoTop()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(msg)
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.screen = screenList
@@ -267,6 +338,75 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "shift+tab":
 		m.form.prev()
+		return m, nil
+
+	// Cycle the base URL among the spec's servers.
+	case "ctrl+e":
+		if m.form.bodyFocused() {
+			break // let the textarea use ctrl+e (end of line)
+		}
+		if len(m.servers) > 1 {
+			m.serverIdx = (m.serverIdx + 1) % len(m.servers)
+			m.baseURL = m.servers[m.serverIdx]
+			m.errMsg = "server: " + m.baseURL
+		}
+		return m, nil
+
+	// Filter the response body with a dot-path query.
+	case "ctrl+f":
+		if m.form.bodyFocused() {
+			break // let the textarea use ctrl+f (forward char)
+		}
+		if m.result == nil || m.result.Err != nil {
+			m.errMsg = "no response to filter yet"
+			return m, nil
+		}
+		m.queryActive = true
+		m.filterInput.SetValue(m.filterPath)
+		return m, m.filterInput.Focus()
+
+	// Validate the JSON body against the schema on demand.
+	case "ctrl+b":
+		if m.form.bodyFocused() {
+			break // let the textarea use ctrl+b (back char)
+		}
+		if v := m.form.endpoint.ValidateBody; v != nil {
+			if msg := v(m.form.bodyValue()); msg != "" {
+				m.errMsg = "body invalid: " + msg
+			} else {
+				m.errMsg = "body valid"
+			}
+		} else {
+			m.errMsg = "this endpoint has no JSON body"
+		}
+		return m, nil
+
+	// Copy the equivalent curl command to the clipboard.
+	case "ctrl+y":
+		cmd, err := buildCurl(m.buildRequest())
+		if err != nil {
+			m.errMsg = "curl failed: " + err.Error()
+			return m, nil
+		}
+		if err := clipboard.WriteAll(cmd); err != nil {
+			name, ferr := saveText("apic-curl", "sh", cmd)
+			if ferr != nil {
+				m.errMsg = "clipboard unavailable: " + err.Error()
+			} else {
+				m.errMsg = "clipboard unavailable, wrote " + name
+			}
+		} else {
+			m.errMsg = "copied curl to clipboard"
+		}
+		return m, nil
+
+	// Reload the last request sent to this endpoint.
+	case "ctrl+p":
+		if !m.historyAvailable {
+			m.errMsg = "no saved request for this endpoint"
+			return m, nil
+		}
+		m.reloadHistory()
 		return m, nil
 
 	// Scroll the response pane without stealing keys from the form.
@@ -315,24 +455,21 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.errMsg = "missing required: " + strings.Join(missing, ", ")
 			return m, nil
 		}
+		// Validate the JSON body against the schema before firing a request
+		// that is otherwise guaranteed to 400.
+		if v := m.form.endpoint.ValidateBody; v != nil {
+			if msg := v(m.form.bodyValue()); msg != "" {
+				m.errMsg = "body invalid: " + msg
+				return m, nil
+			}
+		}
 		m.errMsg = ""
 		m.sending = true
 		m.result = nil
 
-		path, query, headers := m.form.values()
-		req := httpx.Request{
-			Method:     m.form.endpoint.Method,
-			BaseURL:    m.baseURL,
-			Path:       m.form.endpoint.Path,
-			PathParams: path,
-			Query:      query,
-			Headers:    mergeHeaders(m.baseHeaders, headers),
-			Body:       m.form.bodyValue(),
-		}
-
 		// Two commands at once: start the spinner ticking AND fire the
 		// request. tea.Batch runs them concurrently.
-		return m, tea.Batch(m.spin.Tick, sendRequest(req))
+		return m, tea.Batch(m.spin.Tick, sendRequest(m.buildRequest()))
 	}
 
 	var cmd tea.Cmd
@@ -340,210 +477,17 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// ---------------------------------------------------------------- view
-
-func (m Model) View() string {
-	if !m.ready {
-		return "loading..."
+// buildRequest assembles the httpx.Request from the current form. Shared by the
+// send (ctrl+s) and save-as-curl (ctrl+y) paths.
+func (m Model) buildRequest() httpx.Request {
+	path, query, headers := m.form.values()
+	return httpx.Request{
+		Method:     m.form.endpoint.Method,
+		BaseURL:    m.baseURL,
+		Path:       m.form.endpoint.Path,
+		PathParams: path,
+		Query:      query,
+		Headers:    mergeHeaders(m.baseHeaders, headers),
+		Body:       m.form.bodyValue(),
 	}
-	if m.screen == screenList {
-		return m.listView()
-	}
-	return m.detailView()
-}
-
-func (m Model) listView() string {
-	var b strings.Builder
-	b.WriteString(m.header() + "\n\n")
-
-	if m.filtering || m.filter.Value() != "" {
-		b.WriteString(m.filter.View() + "\n\n")
-	}
-
-	if len(m.visible) == 0 {
-		b.WriteString(dimStyle.Render("No endpoints match.") + "\n")
-	}
-
-	h := m.listHeight()
-	end := min(m.offset+h, len(m.visible))
-
-	for i := m.offset; i < end; i++ {
-		ep := m.api.Endpoints[m.visible[i]]
-		row := methodStyle(ep.Method).Render(fmt.Sprintf(" %-6s ", ep.Method)) + " "
-
-		path := ep.Path
-		if i == m.cursor {
-			row += selStyle.Render(path)
-		} else {
-			row += pathStyle.Render(path)
-		}
-		if ep.Summary != "" {
-			row += dimStyle.Render("  " + truncate(ep.Summary, 40))
-		}
-
-		if i == m.cursor {
-			b.WriteString(cursorStyle.Render("›") + " " + row + "\n")
-		} else {
-			b.WriteString("  " + row + "\n")
-		}
-	}
-
-	b.WriteString("\n" + dimStyle.Render(fmt.Sprintf("%d/%d endpoints", len(m.visible), len(m.api.Endpoints))))
-	b.WriteString("\n" + helpStyle.Render("j/k move · / filter · enter open · q quit"))
-	return b.String()
-}
-
-func (m Model) detailView() string {
-	left := m.form.view()
-
-	var right strings.Builder
-	right.WriteString(titleStyle.Render("Response") + "\n")
-
-	switch {
-	case m.sending:
-		right.WriteString(m.spin.View() + " sending...\n\n")
-	case m.result != nil && m.result.Err == nil:
-		right.WriteString(statusStyle(m.result.Status).Render(httpx.StatusText(m.result.Status)))
-		right.WriteString(dimStyle.Render(fmt.Sprintf("  %s", m.result.Duration.Round(1e6))))
-		if m.result.Truncated {
-			right.WriteString(errStyle.Render("  (truncated — ctrl+o to save full)"))
-		}
-		if m.showHeaders {
-			right.WriteString(dimStyle.Render("  [headers]"))
-		}
-		right.WriteString("\n\n")
-	case m.result != nil:
-		right.WriteString(errStyle.Render("error") + "\n\n")
-	default:
-		right.WriteString("\n\n")
-	}
-	right.WriteString(m.response.View())
-
-	// Both panes get the same explicit height, otherwise the shorter one's
-	// border stops early and the layout looks broken.
-	paneH := max(8, m.height-8)
-	paneW := m.paneWidth()
-
-	leftPane := paneStyle.Width(paneW).Height(paneH).Render(left)
-	rightPane := paneStyle.Width(paneW).Height(paneH).Render(right.String())
-
-	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-
-	footer := helpStyle.Render("tab field · ctrl+s send · ctrl+d/u scroll · ctrl+r headers · ctrl+o save · esc back")
-	if m.errMsg != "" {
-		footer = errStyle.Render(m.errMsg) + "\n" + footer
-	}
-
-	return m.header() + "\n\n" + body + "\n" + footer
-}
-
-// paneWidth is the width of each of the two side-by-side panes, chosen so both
-// fit within the terminal once lipgloss adds their borders. It is the single
-// source of truth shared by detailView and the viewport sizing in Update.
-func (m Model) paneWidth() int {
-	return max(30, m.width/2-2)
-}
-
-// refreshResponse rebuilds the viewport contents from the current result,
-// wrapping to the pane width so long lines never bleed past the border. The
-// raw body is kept intact in m.result for saving; only the display is wrapped.
-func (m *Model) refreshResponse() {
-	if m.result == nil {
-		return
-	}
-
-	var content string
-	switch {
-	case m.result.Err != nil:
-		content = errStyle.Render("Request failed:\n\n" + m.result.Err.Error())
-	case m.showHeaders:
-		content = renderHeaders(m.result.Headers) + "\n" + m.result.Body
-	default:
-		content = m.result.Body
-	}
-
-	if w := m.response.Width; w > 0 {
-		content = lipgloss.NewStyle().Width(w).Render(content)
-	}
-	m.response.SetContent(content)
-}
-
-// renderHeaders formats response headers in stable, canonical order.
-func renderHeaders(h http.Header) string {
-	if len(h) == 0 {
-		return dimStyle.Render("(no headers)")
-	}
-	names := make([]string, 0, len(h))
-	for name := range h {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	var b strings.Builder
-	for _, name := range names {
-		b.WriteString(selStyle.Render(name) + ": " + strings.Join(h[name], ", ") + "\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// mergeHeaders combines base headers (e.g. a global auth token) with per-form
-// headers. Form values win, so a user can override a global on one endpoint.
-func mergeHeaders(base, form map[string]string) map[string]string {
-	out := make(map[string]string, len(base)+len(form))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range form {
-		if v != "" {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func (m Model) header() string {
-	title := m.api.Title
-	if title == "" {
-		title = "API"
-	}
-	return titleStyle.Render(title) + dimStyle.Render("  "+m.baseURL)
-}
-
-// ---------------------------------------------------------------- helpers
-
-// saveResponse writes the full response body to a file in the current
-// directory and returns the filename. It picks the first name that does
-// not already exist so successive saves do not clobber each other.
-func saveResponse(body string) (string, error) {
-	for i := 0; ; i++ {
-		name := "apic-response.json"
-		if i > 0 {
-			name = fmt.Sprintf("apic-response-%d.json", i)
-		}
-		if _, err := os.Stat(name); os.IsNotExist(err) {
-			return name, os.WriteFile(name, []byte(body), 0o644)
-		}
-	}
-}
-
-func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

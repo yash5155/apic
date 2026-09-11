@@ -84,28 +84,27 @@ func TestFormIsGeneratedFromSchema(t *testing.T) {
 	if m.screen != screenDetail {
 		t.Fatal("should be on the detail screen")
 	}
-	if got := len(m.form.inputs); got != 3 {
-		t.Fatalf("expected 3 inputs, got %d", got)
+	if got := len(m.form.fields); got != 3 {
+		t.Fatalf("expected 3 fields, got %d", got)
 	}
 	if m.form.hasBody {
 		t.Error("GET should not have a body pane")
 	}
 
 	// the integer param picked up its default
-	var limitValue string
-	for i, p := range m.form.endpoint.Params {
-		if p.Name == "limit" {
-			limitValue = m.form.inputs[i].Value()
-		}
-	}
-	if limitValue != "20" {
+	if limitValue := m.form.value("limit"); limitValue != "20" {
 		t.Errorf("limit should be prefilled with its default, got %q", limitValue)
 	}
 
-	// the enum became a placeholder hint
-	view := m.form.view()
-	if !strings.Contains(view, "available | pending | sold") {
-		t.Error("enum values should show as a placeholder hint")
+	// the enum param became a selector, not a free-text field
+	var statusField field
+	for _, fld := range m.form.fields {
+		if fld.Param().Name == "status" {
+			statusField = fld
+		}
+	}
+	if _, ok := statusField.(*enumField); !ok {
+		t.Errorf("status enum should be an enumField, got %T", statusField)
 	}
 }
 
@@ -163,14 +162,8 @@ func TestValuesSplitByLocation(t *testing.T) {
 	m := sized(t, "https://x.test")
 	m = send(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	for i, p := range m.form.endpoint.Params {
-		switch p.Name {
-		case "status":
-			m.form.inputs[i].SetValue("available")
-		case "X-Request-Id":
-			m.form.inputs[i].SetValue("req-1")
-		}
-	}
+	m.form.setValue("status", "available")
+	m.form.setValue("X-Request-Id", "req-1")
 
 	path, query, headers := m.form.values()
 	if len(path) != 0 {
@@ -198,11 +191,7 @@ func TestFullRequestRoundTrip(t *testing.T) {
 	m := sized(t, srv.URL)
 	m = send(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	for i, p := range m.form.endpoint.Params {
-		if p.Name == "status" {
-			m.form.inputs[i].SetValue("sold")
-		}
-	}
+	m.form.setValue("status", "sold")
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	m = next.(Model)

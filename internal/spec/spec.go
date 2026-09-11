@@ -10,8 +10,10 @@ package spec
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
@@ -25,6 +27,17 @@ type Param struct {
 	Enum        []string
 	Default     string
 	Description string
+	Note        string // extra UI hint, e.g. "(auth)" for synthesized auth fields
+}
+
+// SecurityScheme is one declared authentication method, flattened from the
+// spec's components. Only the fields the UI needs to build an input are kept.
+type SecurityScheme struct {
+	Key    string // component key, e.g. "ApiKeyAuth"
+	Type   string // "apiKey" | "http" | "oauth2" | "openIdConnect"
+	In     string // "header" | "query" (apiKey only)
+	Name   string // header/query name (apiKey), or "Authorization" for http
+	Scheme string // "bearer" | "basic" (http)
 }
 
 // Endpoint is one method+path pair from the spec.
@@ -33,7 +46,14 @@ type Endpoint struct {
 	Path         string
 	Summary      string
 	Params       []Param
-	BodySkeleton string // pretty JSON starter body, empty if the endpoint takes none
+	BodySkeleton string   // pretty JSON starter body, empty if the endpoint takes none
+	Auth         []string // security-scheme keys that satisfy this endpoint
+
+	// ValidateBody checks a JSON body string against the request-body schema.
+	// It is nil when the endpoint takes no JSON body, and returns "" when the
+	// body is valid or a human-readable message naming the offending field.
+	// Kept as a closure so kin-openapi never leaks out of this package.
+	ValidateBody func(string) string `json:"-"`
 }
 
 // Label is what we show in the endpoint list.
@@ -47,6 +67,7 @@ type API struct {
 	Version   string
 	Servers   []string
 	Endpoints []Endpoint
+	Security  map[string]SecurityScheme // keyed by component name
 }
 
 // methodOrder keeps the list stable and readable instead of Go's random
@@ -74,6 +95,8 @@ func flatten(doc *openapi3.T) *API {
 		}
 	}
 
+	api.Security = convertSecuritySchemes(doc)
+
 	if doc.Paths == nil {
 		return api
 	}
@@ -100,6 +123,8 @@ func flatten(doc *openapi3.T) *API {
 			ep.Params = append(ep.Params, convertParams(item.Parameters)...)
 			ep.Params = append(ep.Params, convertParams(op.Parameters)...)
 			ep.BodySkeleton = bodySkeleton(op)
+			ep.ValidateBody = bodyValidator(op)
+			ep.Auth = operationAuth(op, doc)
 
 			api.Endpoints = append(api.Endpoints, ep)
 		}
@@ -114,6 +139,89 @@ func flatten(doc *openapi3.T) *API {
 	})
 
 	return api
+}
+
+// convertSecuritySchemes flattens the document's declared auth schemes.
+func convertSecuritySchemes(doc *openapi3.T) map[string]SecurityScheme {
+	if doc.Components == nil || len(doc.Components.SecuritySchemes) == 0 {
+		return nil
+	}
+	out := make(map[string]SecurityScheme, len(doc.Components.SecuritySchemes))
+	for key, ref := range doc.Components.SecuritySchemes {
+		if ref == nil || ref.Value == nil {
+			continue
+		}
+		v := ref.Value
+		s := SecurityScheme{
+			Key:    key,
+			Type:   v.Type,
+			In:     v.In,
+			Name:   v.Name,
+			Scheme: strings.ToLower(v.Scheme),
+		}
+		// http auth carries the credential in the Authorization header.
+		if s.Type == "http" || s.Type == "oauth2" || s.Type == "openIdConnect" {
+			s.In = "header"
+			s.Name = "Authorization"
+		}
+		out[key] = s
+	}
+	return out
+}
+
+// operationAuth returns the security-scheme keys that satisfy an operation.
+// OpenAPI security is an OR of AND-groups; we take the first group as the
+// pragmatic default the UI pre-fills.
+func operationAuth(op *openapi3.Operation, doc *openapi3.T) []string {
+	reqs := doc.Security
+	if op.Security != nil {
+		reqs = *op.Security
+	}
+	if len(reqs) == 0 {
+		return nil
+	}
+	var keys []string
+	for name := range reqs[0] {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// bodyValidator returns a closure that validates a JSON body string against the
+// operation's request-body schema. It returns nil when there is no JSON body,
+// keeping all kin-openapi types contained in this package.
+func bodyValidator(op *openapi3.Operation) func(string) string {
+	if op.RequestBody == nil || op.RequestBody.Value == nil {
+		return nil
+	}
+	media := op.RequestBody.Value.Content.Get("application/json")
+	if media == nil || media.Schema == nil || media.Schema.Value == nil {
+		return nil
+	}
+	schema := media.Schema.Value
+
+	return func(body string) string {
+		if strings.TrimSpace(body) == "" {
+			return "" // empty body: let the server decide
+		}
+		var v any
+		if err := json.Unmarshal([]byte(body), &v); err != nil {
+			return "invalid JSON: " + err.Error()
+		}
+		if err := schema.VisitJSON(v); err != nil {
+			var se *openapi3.SchemaError
+			if errors.As(err, &se) {
+				ptr := strings.Join(se.JSONPointer(), "/")
+				if ptr == "" {
+					ptr = "(root)"
+				}
+				return fmt.Sprintf("/%s: %s", ptr, se.Reason)
+			}
+			return err.Error()
+		}
+		return ""
+	}
 }
 
 func convertParams(refs openapi3.Parameters) []Param {

@@ -39,11 +39,7 @@ func TestGlobalHeaderIsSent(t *testing.T) {
 	m = send(m, tea.KeyMsg{Type: tea.KeyEnter}) // GET /pets
 
 	// satisfy the required "status" field
-	for i, p := range m.form.endpoint.Params {
-		if p.Name == "status" {
-			m.form.inputs[i].SetValue("sold")
-		}
-	}
+	m.form.setValue("status", "sold")
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	batch, ok := cmd().(tea.BatchMsg)

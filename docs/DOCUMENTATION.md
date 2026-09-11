@@ -254,6 +254,7 @@ Two screens: the **endpoint list** and the **detail** view.
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `/` | Filter (matches method, path, and summary) |
+| `ctrl+e` | Switch the active server (see [Switching servers](#switching-servers)) |
 | `enter` | Open the selected endpoint |
 | `esc` | Clear the active filter |
 | `q` | Quit |
@@ -266,27 +267,100 @@ it.
 
 The left pane is the form generated from the endpoint's parameters (path,
 query, and header params, plus a JSON body editor when the endpoint takes one).
-Required fields are marked with `*`. Integer/enum/default hints appear as
-placeholders, and defaults are pre-filled.
+Required fields are marked with `*`. Defaults are pre-filled. Parameters with an
+enum become an **arrow-key selector** you cannot type an invalid value into; and
+any auth the spec declares for the endpoint gets an auto-added field marked
+`(auth)`.
 
 | Key | Action |
 |---|---|
 | `tab` / `shift+tab` | Move between form fields |
-| `ctrl+s` | Send the request |
+| `←` / `→` | Cycle the value of the focused **enum** field |
+| `ctrl+s` | Send the request (validates the body first) |
+| `ctrl+b` | Validate the JSON body against the schema on demand |
+| `ctrl+y` | Copy the equivalent **curl** command to the clipboard |
+| `ctrl+f` | Filter the response with a dot-path (see [Filtering the response](#filtering-the-response)) |
+| `ctrl+p` | Reload the last request sent to this endpoint |
+| `ctrl+e` | Switch the active server |
+| `ctrl+r` | Toggle response **headers** view |
+| `ctrl+o` | Save the full response to a file |
 | `ctrl+d` / `ctrl+u` | Scroll the response down / up (half page) |
 | `pgdn` / `pgup` | Same as `ctrl+d` / `ctrl+u` |
 | mouse wheel | Scroll the response |
 | `ctrl+g` / `ctrl+t` | Jump to bottom / top of the response |
-| `ctrl+r` | Toggle response **headers** view |
-| `ctrl+o` | Save the full response to a file |
 | `esc` | Back to the endpoint list |
 
 `ctrl+d`/`ctrl+u` are the reliable scroll keys — they work on laptops without a
-dedicated `PgDn` key.
+dedicated `PgDn` key. While the JSON body editor is focused, `ctrl+b`/`ctrl+e`/
+`ctrl+f` act as textarea editing keys instead of shortcuts, so body editing is
+never blocked.
 
 The response header line shows the status (colour-coded: green 2xx, orange
 3xx/4xx, red 5xx) and the round-trip time. If the body was larger than
 `--max-body`, it shows `(truncated — ctrl+o to save full)`.
+
+### Enum selectors
+
+When a parameter declares an enum, its field becomes a selector: focus it and
+use `←`/`→` to cycle the allowed values. You cannot type a value the API doesn't
+accept. A required enum starts unset (shown as `(choose)`) so it's caught before
+sending; an optional one can be left as `(skip)`.
+
+### Auth auto-fill
+
+`apic` reads the spec's `securitySchemes` and the security a given operation
+requires. When you open a secured endpoint it adds the right field automatically,
+marked `(auth)`:
+
+- **API key** (`type: apiKey`) → a header or query field with the scheme's name.
+- **Bearer / basic** (`type: http`) → an `Authorization` field, hinted
+  `Bearer <token>` / `Basic <base64>`.
+
+If you passed a global `-H "Authorization: …"`, the bearer field is pre-filled
+from it. A value you type on the form always overrides the global.
+
+### Validate the body
+
+Before sending, `apic` validates the JSON body against the endpoint's
+request-body schema and refuses to send an invalid one, naming the offending
+field (e.g. `body invalid: /name: property "name" is missing`). Press `ctrl+b`
+to validate on demand without sending.
+
+### Save as curl
+
+Press `ctrl+y` to copy the exact equivalent `curl` command — resolved URL,
+headers (including auth and defaults), and body — to your clipboard. If no
+clipboard is available (e.g. a bare SSH session), it writes `apic-curl.sh`
+instead and tells you.
+
+### Filtering the response
+
+Press `ctrl+f` to open a filter box and type a dot-path to narrow a large
+response:
+
+```
+.               whole document
+.data.items     a nested field
+.pets[0].name   an array element's field
+.meta.total
+```
+
+The filter only changes what's displayed — `ctrl+o` (save) and `ctrl+y` (curl)
+still use the full raw body. Press `enter` to apply, `esc` to clear.
+
+### Reload a previous request
+
+After a successful (2xx) request, `apic` remembers what you sent for that
+endpoint in `~/.config/apic/history.json`. Reopen the endpoint and press
+`ctrl+p` to refill the form. **Secrets are never written to disk** —
+`Authorization`, `Cookie`, and any api-key values are stripped before saving, so
+you re-enter those.
+
+### Switching servers
+
+If the spec lists several servers (prod/staging/local), press `ctrl+e` on either
+screen to cycle the active base URL among them (plus any `--server` you passed).
+The current base URL is shown in the header.
 
 ### Terminal size
 

@@ -1,0 +1,41 @@
+openapi: 3.0.0
+info:
+  title: Secured Service
+  version: "1.0"
+servers:
+  - url: https://secure.example.test
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Widget:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+security:
+  - BearerAuth: []
+paths:
+  /widgets:
+    get:
+      summary: List widgets
+      security:
+        - ApiKeyAuth: []
+    post:
+      summary: Create a widget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Widget"

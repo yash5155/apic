@@ -70,10 +70,21 @@ and exit · `--timeout` per-request timeout · `-k/--insecure` skip TLS verify �
 
 ## Keys
 
-**Endpoint list:** `j`/`k` move · `/` filter · `enter` open · `q` quit
-**Detail:** `tab`/`shift+tab` field · `ctrl+s` send · `ctrl+d`/`ctrl+u` (or
-`pgdn`/`pgup`, or mouse wheel) scroll · `ctrl+g`/`ctrl+t` end/top · `ctrl+r`
-headers · `ctrl+o` save full response · `esc` back
+**Endpoint list:** `j`/`k` move · `/` filter · `ctrl+e` switch server · `enter` open · `q` quit
+**Detail:** `tab`/`shift+tab` field · `←`/`→` cycle enum · `ctrl+s` send ·
+`ctrl+b` validate body · `ctrl+y` copy as curl · `ctrl+f` filter response ·
+`ctrl+p` reload last request · `ctrl+e` switch server · `ctrl+r` headers ·
+`ctrl+d`/`ctrl+u` (or `pgdn`/`pgup`, or mouse wheel) scroll · `ctrl+g`/`ctrl+t`
+end/top · `ctrl+o` save full response · `esc` back
+
+## Features
+
+Schema-driven forms · **enum dropdowns** (arrow-key selectors) · **body
+validation** against the request schema before sending · **security-scheme
+auto-fill** (api-key / bearer fields from the spec) · **response filtering**
+with a `.data.items[0]` dot-path · **save as curl** to the clipboard · **request
+history** per endpoint (secrets never written to disk) · **runtime server
+switching** across the spec's servers.
 
 ## How it's put together
 
@@ -165,21 +176,18 @@ command Bubble Tea would have run, unwraps the `tea.BatchMsg`, feeds the
 `responseMsg` back into `Update`, and checks the status line renders — all
 against a real `httptest` server.
 
-## What's missing
+## Ideas for later
 
-Deliberately, so there's something to build:
+The big feature set (auth auto-fill, history, enum selectors, response
+filtering, multi-server, body validation, save-as-curl) is now built — see
+[Features](#features). Still open:
 
-- **Read `securitySchemes`.** Global auth works today via `-H`; a nice next step
-  is reading the spec's declared schemes and prompting for the right one.
-- **Request history.** Save what you sent per endpoint and reload it, so
-  you're not retyping the same ids. Needs a small JSON store in `~/.config/apic/`.
-- **Enum dropdowns.** Enums are placeholder hints right now; they should be
-  a proper selector you can't type a wrong value into.
-- **Response filtering.** A jq-style query box over the response body.
-- **Multiple servers.** The spec often lists prod/staging; let the user switch.
-- **Body validation.** Check the typed JSON against the schema before
-  sending, and show which field is wrong.
-- **Save as curl.** One keypress to copy the equivalent curl command.
+- **OAuth2 flows.** Bearer/basic/api-key work today; a full OAuth2 token dance
+  (authorization-code / client-credentials) would be a nice addition.
+- **Real jq.** The response filter is a lightweight dot-path; swapping in a jq
+  engine behind a flag would unlock pipes and `select()`.
+- **Enum multi-select** for array-of-enum query params.
+- **Named history** — keep more than the last request per endpoint.
 
 ## Notes
 
